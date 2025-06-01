@@ -1,88 +1,86 @@
 import os
+import cv2
 import torch
-import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
-from torchvision import transforms
-from PIL import Image
-import matplotlib.pyplot as plt
 import numpy as np
+from PIL import Image
+from torch.utils.data import Dataset, DataLoader
+import torch.nn as nn
+from torchvision import transforms
+from model import UNetEdgeDetector  # make sure this is defined in model.py
 
 # --- Configuration ---
-IMG_PATH = "images/frame_0000.jpg"
-MASK_PATH = "masks_binary/frame_0000.jpg"
+IMAGE_DIR = "images"
+MASK_DIR = "masks_binary"
+MODEL_SAVE_PATH = "trained_edge_model.pth"
+IMG_SIZE = (256, 256)
+BATCH_SIZE = 2
+EPOCHS = 20
+LR = 1e-4
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # --- Dataset Class ---
-class SingleSampleDataset(Dataset):
-    def __init__(self, img_path, mask_path, transform=None):
-        self.img_path = img_path
-        self.mask_path = mask_path
-        self.transform = transform
+class EdgeDataset(Dataset):
+    def __init__(self, image_dir, mask_dir):
+        self.pairs = [f for f in os.listdir(image_dir)
+                      if f in os.listdir(mask_dir) and f.endswith(('.jpg', '.png'))]
+        self.image_dir = image_dir
+        self.mask_dir = mask_dir
+        self.img_transform = transforms.Compose([
+            transforms.Resize(IMG_SIZE),
+            transforms.ToTensor()
+        ])
 
     def __len__(self):
-        return 1
+        return len(self.pairs)
 
     def __getitem__(self, idx):
-        img = Image.open(self.img_path).convert("L")
-        mask = Image.open(self.mask_path).convert("L")
-        
-        if self.transform:
-            img = self.transform(img)
-            mask = self.transform(mask)
-        return img, mask
+        fname = self.pairs[idx]
+        img_path = os.path.join(self.image_dir, fname)
+        mask_path = os.path.join(self.mask_dir, fname)
 
-# --- Dummy UNet Model (replace with yours) ---
-class UNetEdgeDetector(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Conv2d(1, 8, 3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(8, 1, 3, padding=1),
-            nn.Sigmoid()
-        )
+        image = Image.open(img_path).convert("RGB")
+        mask = Image.open(mask_path).convert("L")
 
-    def forward(self, x):
-        return self.net(x)
+        image = self.img_transform(image)
+        mask = self.img_transform(mask)
+        mask = (mask > 0.5).float()
 
-# --- Transform ---
-transform = transforms.Compose([
-    transforms.Resize((256, 256)),
-    transforms.ToTensor()
-])
+        # Optional: Dilate mask to slightly thicken edges
+        mask_np = mask.squeeze().numpy()
+        mask_np = cv2.dilate((mask_np * 255).astype(np.uint8),
+                             np.ones((3, 3), np.uint8), iterations=1)
+        mask = torch.tensor(mask_np / 255.0).unsqueeze(0).float()
 
-# --- Load Data ---
-dataset = SingleSampleDataset(IMG_PATH, MASK_PATH, transform=transform)
-dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
+        return image, mask
 
-# --- Initialize Model ---
+# --- Model Setup ---
 model = UNetEdgeDetector().to(DEVICE)
-criterion = nn.BCELoss()
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([10.0]).to(DEVICE))
+
+# --- Dataset & Loader ---
+dataset = EdgeDataset(IMAGE_DIR, MASK_DIR)
+dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
 
 # --- Training Loop ---
 model.train()
-for epoch in range(5):
+for epoch in range(EPOCHS):
+    total_loss = 0
     for images, masks in dataloader:
         images, masks = images.to(DEVICE), masks.to(DEVICE)
-        preds = model(images)
 
-        loss_map = (preds - masks) ** 2
+        preds = model(images)
         loss = criterion(preds, masks)
 
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
-        print(f"Epoch {epoch+1} | Loss: {loss.item():.6f}")
+        total_loss += loss.item()
 
-        # Visual Debug
-        pred_np = preds[0][0].detach().cpu().numpy()
-        mask_np = masks[0][0].cpu().numpy()
-        diff_np = np.abs(pred_np - mask_np)
+    avg_loss = total_loss / len(dataloader)
+    print(f"📘 Epoch {epoch+1}/{EPOCHS} — Loss: {avg_loss:.6f}")
 
-        fig, axs = plt.subplots(1, 3, figsize=(12, 4))
-        axs[0].imshow(pred_np, cmap='gray'); axs[0].set_title("Prediction")
-        axs[1].imshow(mask_np, cmap='gray'); axs[1].set_title("Mask")
-        axs[2].imshow(diff_np, cmap='hot'); axs[2].set_title("Difference")
-        plt.show()
+# --- Save Model ---
+torch.save(model.state_dict(), MODEL_SAVE_PATH)
+print(f"✅ Model saved to: {MODEL_SAVE_PATH}")

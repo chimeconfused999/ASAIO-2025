@@ -54,8 +54,7 @@ while True:
     pil_img = Image.fromarray(frame_rgb)
 
     # Resize and transform
-    resized = pil_img.resize((256, 256))
-    input_tensor = transform(resized).unsqueeze(0).to(device)
+    input_tensor = transform(pil_img).unsqueeze(0).to(device)
 
     with torch.no_grad():
         pred = model(input_tensor)
@@ -63,22 +62,24 @@ while True:
     # Get predicted edge map
     edge_map = torch.sigmoid(pred.squeeze()).cpu().numpy()
 
-    # Normalize to [0,255] and threshold
-    edge_mask = ((edge_map > 0.3) * 255).astype(np.uint8)  # You can adjust the 0.3 threshold
 
-    # Resize to original frame size
-    edge_mask = cv2.resize(edge_mask, (width, height), interpolation=cv2.INTER_NEAREST)
+    # Apply strict thresholding to avoid blobs
+    binary_mask = (edge_map > 0.5).astype(np.uint8) * 255
+    resized_mask = cv2.resize(binary_mask, (width, height), interpolation=cv2.INTER_NEAREST)
 
-    # Overlay green on edges
-    green_edges = frame.copy()
-    green_edges[edge_mask != 0] = [0, 255, 0]
+    # Find contours only
+    contours, _ = cv2.findContours(resized_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Draw contours in green (not filled)
+    frame_with_edges = frame.copy()
+    cv2.drawContours(frame_with_edges, contours, -1, (0, 255, 0), thickness=2)
 
     # Add frame number
-    cv2.putText(green_edges, f"Frame {frame_index}", (10, 30),
+    cv2.putText(frame_with_edges, f"Frame {frame_index}", (10, 30),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
 
-    out.write(green_edges)
-    cv2.imshow("Green Edge Overlay", green_edges)
+    out.write(frame_with_edges)
+    cv2.imshow("Green Edge Overlay", frame_with_edges)
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
