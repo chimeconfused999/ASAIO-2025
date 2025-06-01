@@ -61,12 +61,6 @@ while True:
 
     # Get predicted edge map
     edge_map = torch.sigmoid(pred.squeeze()).cpu().numpy()
-    import matplotlib.pyplot as plt
-
-    plt.imshow(edge_map, cmap='gray')
-    plt.title(f"Raw Prediction - Frame {frame_index}")
-    plt.colorbar()
-    plt.show()
 
     # Apply strict thresholding to avoid blobs
     binary_mask = (edge_map > 0.5).astype(np.uint8) * 255
