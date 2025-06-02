@@ -2,7 +2,7 @@ import cv2
 import os
 
 # --------- 1. Configuration ---------
-video_path = 'Untrasound_Venous_Valve.avi'
+video_path = 'Ultrasound_Venous_Valve.avi'
 output_folder = 'images'
 
 # --------- 2. Create Output Folder ---------
