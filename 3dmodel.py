@@ -44,6 +44,7 @@ for fname in mask_files:
     for cnt in contours[:2]:
         if cv2.contourArea(cnt) >= min_area:
             cv2.drawContours(filled, [cnt], -1, 255, thickness=cv2.FILLED)
+            
 
 
     # Optional: close small holes/gaps to smooth shape
